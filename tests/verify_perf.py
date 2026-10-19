@@ -160,6 +160,10 @@ def check(label, results):
     print(f"  [{'ok' if same else 'DIFF'}] {label}  ({summary(results['new'])})")
 
 
+def label(d):
+    return os.path.join(*Path(d).parts[-2:])
+
+
 def backup_copy(src, dst):
     with sqlite3.connect(f"file:{src}?mode=ro", uri=True) as s, sqlite3.connect(dst) as d:
         s.execute("PRAGMA query_only=ON")
@@ -310,9 +314,9 @@ def suite_real(args, sandbox):
     check("caches after first visit", pair.each(lambda w, ns: (ns["exif_cache"], ns["aes_cache"])))
     for d in dirs:
         for sort_by in ("date", "path name", "ranking", "cfg scale", "seed", "model", "aesthetic_score"):
-            check(f"{os.path.basename(d)} sort {sort_by}", pair.each(lambda w, ns: [call_all(ns, d, sort_by, o) for o in (UP, DOWN)]))
+            check(f"{label(d)} sort {sort_by}", pair.each(lambda w, ns: [call_all(ns, d, sort_by, o) for o in (UP, DOWN)]))
         for flt in (dict(amin="5"), dict(ranking="None"), dict(exif_kw="1girl", amax="6")):
-            check(f"{os.path.basename(d)} filter {flt}", pair.each(lambda w, ns: call_all(ns, d, **flt)))
+            check(f"{label(d)} filter {flt}", pair.each(lambda w, ns: call_all(ns, d, **flt)))
     return pair, dirs
 
 
@@ -320,7 +324,7 @@ def timings(args, pair, dirs):
     print(f"timings: median of {args.runs} interleaved runs per side, seconds")
     cases = [("load_exif_data", None, lambda w, ns, d: w.load_exif_data({}))]
     for d in dirs:
-        base = os.path.basename(d)
+        base = label(d)
         cases += [
             (f"{base} page turn, date", d, lambda w, ns, d: call_all(ns, d)),
             (f"{base} sort cfg scale", d, lambda w, ns, d: call_all(ns, d, "cfg scale")),
