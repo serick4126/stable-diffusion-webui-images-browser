@@ -113,7 +113,7 @@ def call_all(ns, d, sort_by="date", order=DOWN, keyword="", ranking="All", rmin=
 class Pair:
     """Old and new code, each bound to its own copy of the same initial DB."""
 
-    def __init__(self, args, sandbox, db=None, scan_exif=True):
+    def __init__(self, args, sandbox, db=None, scan_exif=True, with_ib=True):
         self.sides = {}
         for name, ref in (("old", args.base), ("new", None)):
             box = sandbox / name
@@ -125,7 +125,7 @@ class Pair:
             wib = load_wib_db(source(ref, WIB_DB), box, name)
             if db is None:
                 wib.check()
-            ns = load_ib(source(ref, IMAGE_BROWSER), wib, opts_stub(scan_exif))
+            ns = load_ib(source(ref, IMAGE_BROWSER), wib, opts_stub(scan_exif)) if with_ib else None
             self.sides[name] = (wib, ns)
 
     def each(self, fn):
@@ -193,12 +193,24 @@ def suite_load_exif(args, sandbox):
                     cur.execute("DELETE FROM exif_data")
                     cur.executemany("INSERT INTO exif_data (file, key, value) VALUES (?, ?, ?)", rows)
                 return wib.load_exif_data(dict(seed)), wib.load_exif_data_by_key({}, "aesthetic_score", "Score")
-            pair = Pair(args, sandbox / "load_exif")
+            pair = Pair(args, sandbox / "load_exif", with_ib=False)
             if version is not None:
                 for wib, _ in pair.sides.values():
                     wib.sqlite3 = types.SimpleNamespace(**{k: getattr(sqlite3, k) for k in dir(sqlite3) if not k.startswith("__")})
                     wib.sqlite3.sqlite_version_info = version
             check(f"rows={len(rows)} seed={len(seed)} sqlite={version or sqlite3.sqlite_version}", pair.each(run))
+    if sqlite3.sqlite_version_info < (3, 44, 0):
+        try:
+            sqlite3.connect(":memory:").execute("SELECT group_concat(x, ',' ORDER BY x) FROM (SELECT 1 AS x)")
+            failures.append("ordered aggregate unexpectedly supported")
+        except sqlite3.OperationalError as e:
+            print(f"  [ok] ordered aggregate rejected by this runtime: {e}")
+    if args.real_load:
+        master = sandbox / "real_master.sqlite3"
+        if not master.exists():
+            backup_copy(args.db, master)
+        pair = Pair(args, sandbox / "real_load", db=master, with_ib=False)
+        check("real DB load_exif_data", pair.each(lambda w, ns: w.load_exif_data({})))
 
 
 def make_images(folder, n):
@@ -339,6 +351,7 @@ def main():
     p.add_argument("--dirs", nargs="*", default=[])
     p.add_argument("--runs", type=int, default=5)
     p.add_argument("--only-load-exif", action="store_true")
+    p.add_argument("--real-load", action="store_true", help="also compare load_exif_data on a copy of --db")
     args = p.parse_args()
     sandbox = args.sandbox.resolve()
     assert not sandbox.is_relative_to(REPO), "sandbox must be outside the repository"
